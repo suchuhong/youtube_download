@@ -39,6 +39,11 @@ const swaggerConfig = {
                     enum: ['360p', '480p', '720p', '1080p', 'best'],
                     default: '1080p',
                   },
+                  save_path: {
+                    type: 'string',
+                    description: '保存路径 (可选，默认为 downloads 文件夹)',
+                    example: 'C:\\Downloads\\YouTube',
+                  },
                 },
                 required: ['url'],
               },
@@ -68,6 +73,7 @@ const swaggerConfig = {
                     download_eta: { type: 'string' },
                     download_status: { type: 'string' },
                     local_filename: { type: 'string' },
+                    save_path: { type: 'string' },
                   },
                 },
               },
@@ -115,6 +121,7 @@ const swaggerConfig = {
                     download_speed: { type: 'string' },
                     download_eta: { type: 'string' },
                     download_status: { type: 'string' },
+                    save_path: { type: 'string' },
                   },
                 },
               },
@@ -154,6 +161,47 @@ const swaggerConfig = {
                     qualities: {
                       type: 'array',
                       items: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/select_directory': {
+      get: {
+        summary: '打开系统文件夹选择对话框',
+        description: '打开系统原生的文件夹选择对话框，让用户选择视频保存位置',
+        responses: {
+          200: {
+            description: '选择的文件夹路径',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    path: {
+                      type: 'string',
+                      description: '选择的文件夹路径，如果用户取消选择则为空字符串',
+                      example: 'C:\\Downloads\\YouTube',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          500: {
+            description: '打开文件夹选择对话框失败',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    detail: {
+                      type: 'string',
+                      description: '错误详情',
                     },
                   },
                 },

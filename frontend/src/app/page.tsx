@@ -69,10 +69,6 @@ export default function Home() {
       }
 
       // Windows完整路径格式验证
-      // 支持以下格式:
-      // C:\folder\path
-      // C:/folder/path
-      // \\server\share\path
       const windowsPathRegex = /^([a-zA-Z]:[\\\/]|\\\\[^\\\/]+[\\\/][^\\\/]+[\\\/])(?:[^<>:"|?*\x00-\x1F]*[\\\/]?)*$/;
       if (!windowsPathRegex.test(path)) {
         setPathError('无效的Windows路径格式 (例如: C:\\Downloads 或 C:/Downloads)');
@@ -81,7 +77,7 @@ export default function Home() {
 
       setPathError('');
       return true;
-    } catch (_) {
+    } catch {
       setPathError('路径验证错误');
       return false;
     }
@@ -104,7 +100,7 @@ export default function Home() {
         updateSavePath(normalizedPath);
         validatePath(normalizedPath);
       }
-    } catch (_) {
+    } catch {
       setPathError('选择文件夹失败');
     }
   };
@@ -113,24 +109,25 @@ export default function Home() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
-    if (videoInfo?.download_status === 'downloading' || videoInfo?.download_status === 'preparing') {
+    if (videoInfo?.download_status === 'downloading' || videoInfo?.download_status === 'preparing' || videoInfo?.download_status === 'processing') {
       intervalId = setInterval(async () => {
         try {
-          const response = await fetch(`/api/progress?filename=${encodeURIComponent(videoInfo.local_filename)}`);
+          const encodedFilename = encodeURIComponent(videoInfo.local_filename);
+          const response = await fetch(`/api/progress/${encodedFilename}`);
           const data = await response.json();
           
           if (response.ok) {
             setVideoInfo(prev => prev ? { ...prev, ...data } : null);
             
-            // Clear interval if download is complete or failed
-            if (data.download_status !== 'downloading' && data.download_status !== 'preparing') {
+            // Clear interval if download is complete, failed, or completed processing
+            if (data.download_status === 'completed' || data.download_status === 'error') {
               clearInterval(intervalId);
             }
           }
         } catch (error) {
           console.error('Error fetching progress:', error);
         }
-      }, 10000); // Poll every second
+      }, 1000);
     }
 
     return () => {
@@ -276,7 +273,7 @@ export default function Home() {
             {/* 改进的保存路径输入区域 */}
             <div className="flex flex-col gap-2">
               <label htmlFor="savePath" className="text-sm text-gray-600">
-                保存路径 (可选，默认保存在downloads文件夹)
+                保存路径 (可选，默认保存在&ldquo;下载/YouTube Downloads&rdquo;文件夹)
               </label>
               <div className="flex gap-2">
                 <input
@@ -288,7 +285,7 @@ export default function Home() {
                     updateSavePath(path);
                     validatePath(path);
                   }}
-                  placeholder="例如: C:\Downloads\YouTube"
+                  placeholder="例如: C:\Users\YourName\Downloads\YouTube Downloads"
                   className={`flex-1 p-3 rounded-lg border ${
                     pathError ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'
                   } focus:outline-none focus:ring-2`}

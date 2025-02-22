@@ -36,9 +36,23 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Create downloads directory if it doesn't exist
-DOWNLOAD_DIR = Path("downloads")
-DOWNLOAD_DIR.mkdir(exist_ok=True)
+# 获取用户下载文件夹路径
+def get_downloads_dir() -> Path:
+    if os.name == 'nt':  # Windows
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders') as key:
+                downloads_path = winreg.QueryValueEx(key, '{374DE290-123F-4565-9164-39C4925E467B}')[0]
+                return Path(downloads_path) / 'YouTube Downloads'
+        except Exception:
+            # 如果注册表读取失败，使用默认下载文件夹
+            return Path(os.path.expanduser('~')) / 'Downloads' / 'YouTube Downloads'
+    else:  # Linux/Mac
+        return Path(os.path.expanduser('~')) / 'Downloads' / 'YouTube Downloads'
+
+# 设置默认下载目录
+DOWNLOAD_DIR = get_downloads_dir()
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 class VideoURL(BaseModel):
     url: str
@@ -86,18 +100,22 @@ class VideoURL(BaseModel):
                     path.mkdir(parents=True, exist_ok=True)
                 # 检查是否有写入权限
                 if not os.access(str(path), os.W_OK):
-                    raise ValueError('No write permission for the specified path')
+                    raise ValueError('没有文件夹的写入权限')
                 # 返回标准化的路径字符串
                 return str(path.absolute())
             except Exception as e:
-                raise ValueError(f'Invalid save path: {str(e)}')
+                raise ValueError(f'无效的保存路径: {str(e)}')
         return str(DOWNLOAD_DIR.absolute())  # 如果未提供，返回默认下载目录
 
 def get_safe_filename(title: str) -> str:
     """Convert title to safe filename."""
-    # Remove invalid characters
-    safe_chars = re.sub(r'[<>:"/\\|?*]', '', title)
-    # Limit length and remove trailing spaces
+    # 移除或替换不安全的字符
+    # 1. 替换空格为下划线
+    # 2. 移除特殊字符
+    # 3. 保留中文字符
+    safe_chars = re.sub(r'[<>:"/\\|?*\n\r\t]', '', title)
+    safe_chars = safe_chars.replace(' ', '_')
+    # 限制长度并移除首尾空格
     return safe_chars[:100].strip()
 
 def update_progress(filename: str, progress_data: dict):
@@ -481,9 +499,23 @@ def get_available_formats():
 
 @app.get("/progress/{filename}")
 async def get_progress(filename: str):
-    if filename not in download_progress:
-        raise HTTPException(status_code=404, detail="Download not found")
-    return download_progress[filename]
+    try:
+        # 解码文件名
+        decoded_filename = filename
+        if filename not in download_progress:
+            # 尝试 URL 解码
+            from urllib.parse import unquote
+            decoded_filename = unquote(filename)
+        
+        if decoded_filename not in download_progress:
+            raise HTTPException(status_code=404, detail="Download not found")
+        
+        return download_progress[decoded_filename]
+    except Exception as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Failed to get progress: {str(e)}"
+        )
 
 @app.get("/select_directory")
 async def select_directory():
