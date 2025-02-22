@@ -69,3 +69,4 @@ coverage/
 
 # exclude downloads directory
 backend/downloads 
+backend/*.tmp
