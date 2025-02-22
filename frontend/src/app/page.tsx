@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
+import DownloadProgress from './components/DownloadProgress'; // Import the new component
 
 interface VideoInfo {
   title: string;
@@ -37,6 +38,37 @@ export default function Home() {
     formats: [],
     qualities: []
   });
+
+  // Add polling mechanism for download progress
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (videoInfo?.download_status === 'downloading') {
+      intervalId = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/progress?filename=${encodeURIComponent(videoInfo.local_filename)}`);
+          const data = await response.json();
+          
+          if (response.ok) {
+            setVideoInfo(prev => prev ? { ...prev, ...data } : null);
+            
+            // Clear interval if download is complete or failed
+            if (data.download_status !== 'downloading') {
+              clearInterval(intervalId);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching progress:', error);
+        }
+      }, 1000); // Poll every second
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [videoInfo?.download_status, videoInfo?.local_filename]);
 
   useEffect(() => {
     // Fetch available formats when component mounts
@@ -215,20 +247,13 @@ export default function Home() {
                   <span>Size: {formatFileSize(videoInfo.filesize)}</span>
                   <span>Format: {videoInfo.ext.toUpperCase()}</span>
                 </div>
-                {videoInfo.download_status === 'downloading' && (
-                  <div className="mt-4">
-                    <div className="w-full bg-gray-200 rounded-full h-2.5">
-                      <div
-                        className="bg-blue-600 h-2.5 rounded-full"
-                        style={{ width: `${videoInfo.download_progress}%` }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between mt-2 text-sm text-gray-600">
-                      <span>{videoInfo.download_progress.toFixed(1)}%</span>
-                      <span>{videoInfo.download_speed}</span>
-                      <span>ETA: {videoInfo.download_eta}</span>
-                    </div>
-                  </div>
+                {videoInfo.download_status && (
+                  <DownloadProgress
+                    progress={videoInfo.download_progress || 0}
+                    speed={videoInfo.download_speed || '0 KB/s'}
+                    eta={videoInfo.download_eta || 'calculating...'}
+                    status={videoInfo.download_status}
+                  />
                 )}
                 <div className="mt-4 flex gap-4">
                   <a

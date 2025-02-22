@@ -6,13 +6,17 @@ import re
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
 app = FastAPI()
+
+# Global dictionary to store download progress
+download_progress: Dict[str, dict] = {}
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000","http://localhost:3001", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,18 +75,62 @@ class DownloadProgress:
         self.speed = ""
         self.eta = ""
         self.status = "starting"
+        self.filename = ""
 
     def __call__(self, d):
         if d['status'] == 'downloading':
+            # Calculate progress
             self.progress = float(d.get('downloaded_bytes', 0) / d.get('total_bytes', 1)) * 100
-            self.speed = d.get('speed', 0)
-            self.eta = d.get('eta', 0)
+            
+            # Format speed
+            speed_bytes = d.get('speed', 0)
+            if speed_bytes:
+                if speed_bytes > 1024 * 1024:  # MB/s
+                    self.speed = f"{speed_bytes / (1024 * 1024):.1f} MB/s"
+                else:  # KB/s
+                    self.speed = f"{speed_bytes / 1024:.1f} KB/s"
+            
+            # Format ETA
+            eta_seconds = d.get('eta', 0)
+            if eta_seconds:
+                minutes = eta_seconds // 60
+                seconds = eta_seconds % 60
+                self.eta = f"{minutes}:{seconds:02d}"
+            
             self.status = "downloading"
+            
+            # Update global progress tracker
+            if self.filename:
+                download_progress[self.filename] = {
+                    "download_progress": self.progress,
+                    "download_speed": self.speed,
+                    "download_eta": self.eta,
+                    "download_status": self.status
+                }
+        
         elif d['status'] == 'finished':
             self.progress = 100
             self.status = "finished"
+            self.speed = ""
+            self.eta = ""
+            
+            if self.filename:
+                download_progress[self.filename] = {
+                    "download_progress": 100,
+                    "download_speed": "",
+                    "download_eta": "",
+                    "download_status": "completed"
+                }
+        
         elif d['status'] == 'error':
             self.status = "error"
+            if self.filename:
+                download_progress[self.filename] = {
+                    "download_progress": 0,
+                    "download_speed": "",
+                    "download_eta": "",
+                    "download_status": "error"
+                }
 
 @app.get("/")
 def read_root():
@@ -145,6 +193,17 @@ async def download_video(video_url: VideoURL):
                 'extract_flat': False,
             })
 
+            # Set filename in progress tracker
+            progress_tracker.filename = filename
+            
+            # Initialize progress in global tracker
+            download_progress[filename] = {
+                "download_progress": 0,
+                "download_speed": "",
+                "download_eta": "",
+                "download_status": "preparing"
+            }
+
             # Prepare video information
             video_info = {
                 "title": info.get('title', 'Unknown Title'),
@@ -195,6 +254,12 @@ def get_available_formats():
         "formats": ["mp4", "webm", "mp3", "3gp"],
         "qualities": ["360p", "480p", "720p", "1080p", "best"]
     }
+
+@app.get("/progress/{filename}")
+async def get_progress(filename: str):
+    if filename not in download_progress:
+        raise HTTPException(status_code=404, detail="Download not found")
+    return download_progress[filename]
 
 if __name__ == "__main__":
     import uvicorn
