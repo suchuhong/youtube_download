@@ -43,7 +43,7 @@ export default function Home() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
 
-    if (videoInfo?.download_status === 'downloading') {
+    if (videoInfo?.download_status === 'downloading' || videoInfo?.download_status === 'preparing') {
       intervalId = setInterval(async () => {
         try {
           const response = await fetch(`/api/progress?filename=${encodeURIComponent(videoInfo.local_filename)}`);
@@ -53,14 +53,14 @@ export default function Home() {
             setVideoInfo(prev => prev ? { ...prev, ...data } : null);
             
             // Clear interval if download is complete or failed
-            if (data.download_status !== 'downloading') {
+            if (data.download_status !== 'downloading' && data.download_status !== 'preparing') {
               clearInterval(intervalId);
             }
           }
         } catch (error) {
           console.error('Error fetching progress:', error);
         }
-      }, 1000); // Poll every second
+      }, 10000); // Poll every second
     }
 
     return () => {

@@ -7,11 +7,16 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()
 
 # Global dictionary to store download progress
 download_progress: Dict[str, dict] = {}
+
+# Thread pool for handling downloads
+thread_pool = ThreadPoolExecutor(max_workers=4)
 
 # Configure CORS
 app.add_middleware(
@@ -73,14 +78,16 @@ class DownloadProgress:
     def __init__(self):
         self.progress = 0
         self.speed = ""
-        self.eta = ""
+        self.eta = "calculating..."
         self.status = "starting"
         self.filename = ""
 
     def __call__(self, d):
         if d['status'] == 'downloading':
             # Calculate progress
-            self.progress = float(d.get('downloaded_bytes', 0) / d.get('total_bytes', 1)) * 100
+            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            if total_bytes > 0:
+                self.progress = float(d.get('downloaded_bytes', 0) / total_bytes) * 100
             
             # Format speed
             speed_bytes = d.get('speed', 0)
@@ -89,13 +96,17 @@ class DownloadProgress:
                     self.speed = f"{speed_bytes / (1024 * 1024):.1f} MB/s"
                 else:  # KB/s
                     self.speed = f"{speed_bytes / 1024:.1f} KB/s"
+            else:
+                self.speed = "calculating..."
             
             # Format ETA
-            eta_seconds = d.get('eta', 0)
-            if eta_seconds:
+            eta_seconds = d.get('eta')
+            if eta_seconds is not None and eta_seconds > 0:
                 minutes = eta_seconds // 60
                 seconds = eta_seconds % 60
                 self.eta = f"{minutes}:{seconds:02d}"
+            else:
+                self.eta = "calculating..."
             
             self.status = "downloading"
             
@@ -131,6 +142,15 @@ class DownloadProgress:
                     "download_eta": "",
                     "download_status": "error"
                 }
+
+def download_in_background(url: str, ydl_opts: dict):
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return True
+    except Exception as e:
+        print(f"Download error: {str(e)}")
+        return False
 
 @app.get("/")
 def read_root():
@@ -199,8 +219,8 @@ async def download_video(video_url: VideoURL):
             # Initialize progress in global tracker
             download_progress[filename] = {
                 "download_progress": 0,
-                "download_speed": "",
-                "download_eta": "",
+                "download_speed": "preparing...",
+                "download_eta": "calculating...",
                 "download_status": "preparing"
             }
 
@@ -217,21 +237,15 @@ async def download_video(video_url: VideoURL):
                 "filesize": best_video.get('filesize', 0),
                 "ext": video_url.format,
                 "download_progress": 0,
-                "download_speed": "",
-                "download_eta": "",
+                "download_speed": "preparing...",
+                "download_eta": "calculating...",
                 "download_status": "preparing",
                 "local_filename": filename
             }
 
-            # Start download in background
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([video_url.url])
-                video_info["download_status"] = "completed"
-                video_info["download_progress"] = 100
-            except Exception as e:
-                video_info["download_status"] = "error"
-                video_info["error_message"] = str(e)
+            # Start download in background thread
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(thread_pool, download_in_background, video_url.url, ydl_opts)
 
             return video_info
 
