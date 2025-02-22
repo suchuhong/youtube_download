@@ -41,6 +41,7 @@ const nextConfig = {
       },
     ];
   },
+  transpilePackages: ['swagger-ui-react'],
 }
 
 module.exports = nextConfig 
