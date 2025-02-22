@@ -4,6 +4,14 @@ A modern web application for downloading YouTube videos with a user-friendly int
 
 [中文文档](#youtube-视频下载器)
 
+## Screenshots
+
+### Main Interface
+![Download Interface](./img/download-ui.png)
+
+### API Documentation
+![Swagger UI](./img/swagger-ui.png)
+
 ## Features
 
 - Download YouTube videos and shorts in various formats (MP4, WEBM, MP3, 3GP)
@@ -79,6 +87,14 @@ API documentation is available at http://localhost:3000/api-docs
 # YouTube 视频下载器
 
 一个现代化的 YouTube 视频下载工具，具有友好的用户界面和强大的功能。
+
+## 界面截图
+
+### 主界面
+![下载界面](./img/download-ui.png)
+
+### API 文档界面
+![Swagger 界面](./img/swagger-ui.png)
 
 ## 功能特点
 
