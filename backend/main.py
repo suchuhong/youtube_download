@@ -10,6 +10,9 @@ from typing import Dict
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import tkinter as tk
+from tkinter import filedialog
+import subprocess
 
 app = FastAPI()
 
@@ -41,6 +44,7 @@ class VideoURL(BaseModel):
     url: str
     format: str = "mp4"  # Default format
     quality: str = "1080p"  # Default quality
+    save_path: str = ""  # 用户指定的保存路径，默认为空
 
     @validator('url')
     def validate_youtube_url(cls, v):
@@ -70,6 +74,24 @@ class VideoURL(BaseModel):
         if v not in allowed_qualities:
             raise ValueError(f'Quality must be one of {allowed_qualities}')
         return v
+
+    @validator('save_path')
+    def validate_save_path(cls, v):
+        if v:  # 如果提供了保存路径
+            try:
+                # 转换为 Path 对象进行验证
+                path = Path(v)
+                # 检查路径是否存在
+                if not path.exists():
+                    path.mkdir(parents=True, exist_ok=True)
+                # 检查是否有写入权限
+                if not os.access(str(path), os.W_OK):
+                    raise ValueError('No write permission for the specified path')
+                # 返回标准化的路径字符串
+                return str(path.absolute())
+            except Exception as e:
+                raise ValueError(f'Invalid save path: {str(e)}')
+        return str(DOWNLOAD_DIR.absolute())  # 如果未提供，返回默认下载目录
 
 def get_safe_filename(title: str) -> str:
     """Convert title to safe filename."""
@@ -136,24 +158,24 @@ class DownloadProgress:
                 if self.filename:
                     update_progress(self.filename, {
                         "download_progress": 0,
-                        "download_speed": "",
-                        "download_eta": "",
+                        "download_speed": "0 KB/s",
+                        "download_eta": "--:--",
                         "download_status": "error",
                         "error_message": str(e)
                     })
         
         elif d['status'] == 'finished':
             self.progress = 100
-            self.status = "finished"
-            self.speed = ""
-            self.eta = ""
+            self.status = "processing"  # 表示正在处理（如果需要后处理）
+            self.speed = "完成"  # 使用中文更友好
+            self.eta = "--:--"
             
             if self.filename:
                 update_progress(self.filename, {
                     "download_progress": 100,
-                    "download_speed": "",
-                    "download_eta": "",
-                    "download_status": "completed"
+                    "download_speed": "完成",
+                    "download_eta": "--:--",
+                    "download_status": "processing"
                 })
         
         elif d['status'] == 'error':
@@ -161,8 +183,8 @@ class DownloadProgress:
             if self.filename:
                 update_progress(self.filename, {
                     "download_progress": 0,
-                    "download_speed": "",
-                    "download_eta": "",
+                    "download_speed": "0 KB/s",
+                    "download_eta": "--:--",
                     "download_status": "error"
                 })
 
@@ -250,10 +272,10 @@ def download_in_background(url: str, ydl_opts: dict, filename: str):
         print(f"Download options: {ydl_opts}")
         
         update_progress(filename, {
-            "download_status": "downloading",
+            "download_status": "preparing",
             "download_progress": 0,
-            "download_speed": "preparing...",
-            "download_eta": "calculating..."
+            "download_speed": "准备中...",
+            "download_eta": "--:--"
         })
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -277,11 +299,12 @@ def download_in_background(url: str, ydl_opts: dict, filename: str):
                 print(f"Starting actual download for {url}")
                 ydl.download([url])
                 
+                # 更新最终状态
                 update_progress(filename, {
                     "download_status": "completed",
                     "download_progress": 100,
-                    "download_speed": "",
-                    "download_eta": ""
+                    "download_speed": "完成",  # 使用中文更友好
+                    "download_eta": "--:--"
                 })
                 return True
                 
@@ -289,14 +312,14 @@ def download_in_background(url: str, ydl_opts: dict, filename: str):
                 print(f"Download error: {str(e)}")
                 error_message = str(e)
                 if "Video unavailable" in error_message:
-                    error_message = "This video is unavailable. It might be private or deleted."
+                    error_message = "视频不可用，可能是私有或已删除"
                 elif "This video is only available for registered users" in error_message:
-                    error_message = "This video requires login. Please try another video."
+                    error_message = "此视频需要登录才能观看，请尝试其他视频"
                 update_progress(filename, {
                     "download_status": "error",
                     "download_progress": 0,
-                    "download_speed": "",
-                    "download_eta": "",
+                    "download_speed": "0 KB/s",
+                    "download_eta": "--:--",
                     "error_message": error_message
                 })
                 return False
@@ -310,9 +333,9 @@ def download_in_background(url: str, ydl_opts: dict, filename: str):
         update_progress(filename, {
             "download_status": "error",
             "download_progress": 0,
-            "download_speed": "",
-            "download_eta": "",
-            "error_message": f"Download failed: {str(e)}"
+            "download_speed": "0 KB/s",
+            "download_eta": "--:--",
+            "error_message": f"下载失败: {str(e)}"
         })
         return False
 
@@ -333,14 +356,17 @@ async def download_video(video_url: VideoURL):
         safe_title = get_safe_filename(info.get('title', 'video'))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{safe_title}_{timestamp}.{video_url.format}"
-        filepath = DOWNLOAD_DIR / filename
+        
+        # 使用用户指定的保存路径或默认路径
+        filepath = Path(video_url.save_path) / filename
 
         # Initialize progress tracker
         download_progress[filename] = {
             "download_progress": 0,
-            "download_speed": "preparing...",
-            "download_eta": "calculating...",
-            "download_status": "preparing"
+            "download_speed": "准备中...",
+            "download_eta": "--:--",
+            "download_status": "preparing",
+            "save_path": str(filepath)  # 添加保存路径信息
         }
 
         # Prepare video information response
@@ -356,10 +382,11 @@ async def download_video(video_url: VideoURL):
             "filesize": best_video.get('filesize', 0),
             "ext": video_url.format,
             "download_progress": 0,
-            "download_speed": "preparing...",
-            "download_eta": "calculating...",
+            "download_speed": "准备中...",
+            "download_eta": "--:--",
             "download_status": "preparing",
-            "local_filename": filename
+            "local_filename": filename,
+            "save_path": str(filepath)  # 添加保存路径信息
         }
 
         # Configure download options
@@ -440,6 +467,36 @@ async def get_progress(filename: str):
     if filename not in download_progress:
         raise HTTPException(status_code=404, detail="Download not found")
     return download_progress[filename]
+
+@app.get("/select_directory")
+async def select_directory():
+    try:
+        if os.name == 'nt':  # Windows
+            # 使用 PowerShell 打开文件夹选择对话框
+            command = '''
+            Add-Type -AssemblyName System.Windows.Forms
+            $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+            $folderBrowser.Description = "选择保存目录"
+            $folderBrowser.ShowNewFolderButton = $true
+            if ($folderBrowser.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                $folderBrowser.SelectedPath
+            }
+            '''
+            result = subprocess.run(["powershell", "-Command", command], capture_output=True, text=True)
+            selected_path = result.stdout.strip()
+            
+            if selected_path:
+                return {"path": selected_path}
+            else:
+                return {"path": ""}
+        else:  # 其他系统使用 tkinter
+            root = tk.Tk()
+            root.withdraw()  # 隐藏主窗口
+            directory = filedialog.askdirectory()
+            root.destroy()
+            return {"path": directory if directory else ""}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open directory picker: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

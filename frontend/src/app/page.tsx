@@ -20,6 +20,7 @@ interface VideoInfo {
   download_eta: string;
   download_status: string;
   local_filename: string;
+  save_path: string;  // 添加保存路径字段
 }
 
 interface FormatOptions {
@@ -34,10 +35,79 @@ export default function Home() {
   const [error, setError] = useState('');
   const [format, setFormat] = useState('mp4');
   const [quality, setQuality] = useState('1080p');
+  const [savePath, setSavePath] = useState('');
+  const [pathError, setPathError] = useState('');  // 添加路径错误状态
   const [formatOptions, setFormatOptions] = useState<FormatOptions>({
     formats: [],
     qualities: []
   });
+
+  // 从本地存储加载上次使用的路径
+  useEffect(() => {
+    const lastPath = localStorage.getItem('lastSavePath');
+    if (lastPath) {
+      setSavePath(lastPath);
+    }
+  }, []);
+
+  // 保存路径到本地存储
+  const updateSavePath = (path: string) => {
+    setSavePath(path);
+    localStorage.setItem('lastSavePath', path);
+  };
+
+  // 验证路径
+  const validatePath = (path: string): boolean => {
+    if (!path) return true; // 空路径允许，将使用默认路径
+    
+    try {
+      // Windows路径基本验证
+      const invalidChars = /[<>"|?*\x00-\x1F]/g;
+      if (invalidChars.test(path)) {
+        setPathError('路径包含无效字符 (<>"|?*)');
+        return false;
+      }
+
+      // Windows完整路径格式验证
+      // 支持以下格式:
+      // C:\folder\path
+      // C:/folder/path
+      // \\server\share\path
+      const windowsPathRegex = /^([a-zA-Z]:[\\\/]|\\\\[^\\\/]+[\\\/][^\\\/]+[\\\/])(?:[^<>:"|?*\x00-\x1F]*[\\\/]?)*$/;
+      if (!windowsPathRegex.test(path)) {
+        setPathError('无效的Windows路径格式 (例如: C:\\Downloads 或 C:/Downloads)');
+        return false;
+      }
+
+      setPathError('');
+      return true;
+    } catch (_) {
+      setPathError('路径验证错误');
+      return false;
+    }
+  };
+
+  // 处理选择文件夹
+  const handleSelectDirectory = async () => {
+    try {
+      const response = await fetch('/api/select_directory');
+      const data = await response.json();
+      
+      if (data.error) {
+        setPathError(data.error);
+        return;
+      }
+      
+      if (data.path) {
+        // 标准化路径分隔符
+        const normalizedPath = data.path.replace(/\//g, '\\');
+        updateSavePath(normalizedPath);
+        validatePath(normalizedPath);
+      }
+    } catch (_) {
+      setPathError('选择文件夹失败');
+    }
+  };
 
   // Add polling mechanism for download progress
   useEffect(() => {
@@ -95,15 +165,21 @@ export default function Home() {
     setError('');
     setVideoInfo(null);
 
-    // Client-side validation
+    // 验证输入
     if (!url.trim()) {
-      setError('Please enter a YouTube URL');
+      setError('请输入YouTube视频链接');
       setLoading(false);
       return;
     }
 
     if (!validateYouTubeUrl(url)) {
-      setError('Please enter a valid YouTube URL');
+      setError('请输入有效的YouTube视频链接');
+      setLoading(false);
+      return;
+    }
+
+    // 验证保存路径
+    if (!validatePath(savePath)) {
       setLoading(false);
       return;
     }
@@ -117,19 +193,20 @@ export default function Home() {
         body: JSON.stringify({ 
           url: url.trim(),
           format,
-          quality
+          quality,
+          save_path: savePath.trim()
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to fetch video information');
+        throw new Error(data.detail || '无法获取视频信息');
       }
 
       setVideoInfo(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : '发生错误');
     } finally {
       setLoading(false);
     }
@@ -157,7 +234,7 @@ export default function Home() {
     <main className="min-h-screen p-8 bg-gray-100">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">
-          YouTube Video Downloader
+          YouTube视频下载器
         </h1>
         
         <form onSubmit={handleSubmit} className="mb-8">
@@ -166,7 +243,7 @@ export default function Home() {
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="Enter YouTube URL (e.g., https://www.youtube.com/watch?v=... or shorts/...)"
+              placeholder="输入YouTube视频链接 (例如: https://www.youtube.com/watch?v=... 或 shorts/...)"
               className="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             
@@ -194,15 +271,53 @@ export default function Home() {
                   </option>
                 ))}
               </select>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 whitespace-nowrap"
-              >
-                {loading ? 'Loading...' : 'Download'}
-              </button>
             </div>
+
+            {/* 改进的保存路径输入区域 */}
+            <div className="flex flex-col gap-2">
+              <label htmlFor="savePath" className="text-sm text-gray-600">
+                保存路径 (可选，默认保存在downloads文件夹)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  id="savePath"
+                  value={savePath}
+                  onChange={(e) => {
+                    const path = e.target.value;
+                    updateSavePath(path);
+                    validatePath(path);
+                  }}
+                  placeholder="例如: C:\Downloads\YouTube"
+                  className={`flex-1 p-3 rounded-lg border ${
+                    pathError ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'
+                  } focus:outline-none focus:ring-2`}
+                />
+                <button
+                  type="button"
+                  onClick={handleSelectDirectory}
+                  className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
+                >
+                  选择文件夹
+                </button>
+              </div>
+              {pathError && (
+                <p className="text-sm text-red-600 mt-1">{pathError}</p>
+              )}
+              {savePath && !pathError && (
+                <p className="text-sm text-green-600 mt-1">
+                  ✓ 有效的保存路径
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || !!pathError}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400"
+            >
+              {loading ? '加载中...' : '下载'}
+            </button>
           </div>
         </form>
 
@@ -231,21 +346,18 @@ export default function Home() {
                 )}
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <h2 className="text-xl font-semibold">{videoInfo.title}</h2>
-                  {videoInfo.is_short && (
-                    <span className="bg-red-100 text-red-600 px-2 py-1 rounded-md text-sm font-medium">
-                      Short
-                    </span>
-                  )}
-                </div>
-                <p className="text-gray-600 mb-2">By {videoInfo.author}</p>
+                <h2 className="text-xl font-semibold mb-2">{videoInfo.title}</h2>
+                <p className="text-gray-600 mb-2">作者: {videoInfo.author}</p>
                 <div className="flex flex-wrap gap-4 text-sm text-gray-500">
-                  <span>Duration: {formatDuration(videoInfo.length)}</span>
-                  <span>Views: {formatViews(videoInfo.views)}</span>
-                  <span>Quality: {videoInfo.resolution}</span>
-                  <span>Size: {formatFileSize(videoInfo.filesize)}</span>
-                  <span>Format: {videoInfo.ext.toUpperCase()}</span>
+                  <span>时长: {formatDuration(videoInfo.length)}</span>
+                  <span>观看次数: {formatViews(videoInfo.views)}</span>
+                  <span>质量: {videoInfo.resolution}</span>
+                  <span>大小: {formatFileSize(videoInfo.filesize)}</span>
+                  <span>格式: {videoInfo.ext.toUpperCase()}</span>
+                </div>
+                {/* 显示保存路径 */}
+                <div className="mt-2 text-sm text-gray-600">
+                  保存位置: {videoInfo.save_path}
                 </div>
                 {videoInfo.download_status && (
                   <DownloadProgress
@@ -255,24 +367,6 @@ export default function Home() {
                     status={videoInfo.download_status}
                   />
                 )}
-                <div className="mt-4 flex gap-4">
-                  <a
-                    href={videoInfo.download_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-block px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                  >
-                    Download Video
-                  </a>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(videoInfo.download_url);
-                    }}
-                    className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
-                  >
-                    Copy URL
-                  </button>
-                </div>
               </div>
             </div>
           </div>
