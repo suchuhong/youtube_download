@@ -1,14 +1,13 @@
 /** @type {import('next').NextConfig} */
+const isProd = process.env.NODE_ENV === 'production';
+const internalHost = process.env.TAURI_DEV_HOST || 'localhost';
+
 const nextConfig = {
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: 'http://localhost:8000/:path*',
-      },
-    ];
-  },
+  // Ensure Next.js uses SSG instead of SSR
+  output: 'export',
+  // Configure for Tauri static build
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',
@@ -28,6 +27,19 @@ const nextConfig = {
       },
     ],
   },
+  // Configure assetPrefix for development
+  assetPrefix: isProd ? undefined : `http://${internalHost}:3000`,
+  // Only use rewrites in development mode
+  ...(process.env.NODE_ENV === 'development' && {
+    async rewrites() {
+      return [
+        {
+          source: '/api/:path*',
+          destination: 'http://localhost:8000/:path*',
+        },
+      ];
+    },
+  }),
   async headers() {
     return [
       {

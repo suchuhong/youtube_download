@@ -1,0 +1,95 @@
+{
+  "productName": "YouTube Downloader",
+  "version": "1.0.0",
+  "identifier": "com.youtube.downloader",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ./frontend",
+    "beforeBuildCommand": "npm run build --prefix ./frontend",
+    "frontendDist": "../frontend/.next",
+    "devUrl": "http://localhost:3000"
+  },
+
+  "app": {
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' http://localhost:* ws://localhost:*;"
+    },
+    "windows": [
+      {
+        "title": "YouTube 视频下载器",
+        "width": 1024,
+        "height": 768,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "focus": true,
+        "label": "main"
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "copyright": "© 2024",
+
+    "externalBin": ["../backend/python"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+
+    "longDescription": "A modern YouTube video downloader desktop application",
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "resources": ["../backend/*"],
+    "shortDescription": "YouTube video downloader",
+    "targets": ["nsis", "msi"],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "wix": {
+        "language": ["zh-CN"]
+      },
+      "nsis": {
+        "languages": ["SimpChinese"],
+        "installMode": "both"
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "scope": [
+        {
+          "name": "python",
+          "cmd": "python",
+          "args": ["main.py"]
+        }
+      ]
+    },
+    "http": {
+      "all": true,
+      "scope": ["http://localhost:8000/*"]
+    },
+    "fs": {
+      "all": true,
+      "scope": ["**"]
+    },
+    "path": {
+      "all": true
+    },
+    "dialog": {
+      "all": true
+    }
+  }
+} 
