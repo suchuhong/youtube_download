@@ -211,55 +211,73 @@ def extract_video_info(url: str, format: str, quality: str) -> tuple:
                 print(f"Unexpected error in extract_info: {str(e)}")
                 raise ValueError(f"Error extracting video info: {str(e)}")
 
-        # 优化格式选择策略
-        if format == 'mp4':
-            if quality == 'best':
-                format_spec = 'best[ext=mp4]/best'  # 直接选择最佳MP4格式
+        # 获取所有可用的格式
+        formats = info.get('formats', [])
+        if not formats:
+            raise ValueError("No available formats found")
+
+        # 将质量字符串转换为数字（用于比较）
+        target_height = 0
+        if quality != 'best':
+            target_height = int(quality[:-1])  # 去掉'p'后转换为整数
+
+        # 按照分辨率和格式过滤和排序视频
+        suitable_formats = []
+        for f in formats:
+            # 检查格式是否匹配
+            if format == 'mp3':
+                if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
+                    suitable_formats.append(f)
             else:
-                format_spec = f'best[height<={quality[:-1]}][ext=mp4]/best[ext=mp4]'  # 按照分辨率选择最佳MP4
-        elif format == 'mp3':
-            format_spec = 'bestaudio[ext=mp3]/bestaudio'  # 仅音频
+                # 视频格式必须匹配且包含视频流
+                if f.get('ext') == format and f.get('vcodec') != 'none':
+                    height = f.get('height', 0)
+                    # 对于特定质量，只选择小于等于目标高度的视频
+                    if quality == 'best' or (height and height <= target_height):
+                        suitable_formats.append(f)
+
+        if not suitable_formats:
+            print(f"No suitable formats found for {format} and {quality}, falling back to best available")
+            # 如果没有完全匹配的格式，尝试找到最接近的
+            for f in formats:
+                if format == 'mp3':
+                    if f.get('acodec') != 'none':
+                        suitable_formats.append(f)
+                elif f.get('vcodec') != 'none':
+                    suitable_formats.append(f)
+
+        if not suitable_formats:
+            raise ValueError(f"No suitable format found for {format} {quality}")
+
+        # 选择最佳匹配
+        if format == 'mp3':
+            # 音频选择最高比特率
+            best_format = max(suitable_formats, key=lambda f: f.get('abr', 0) or 0)
+        else:
+            # 视频按分辨率排序
+            suitable_formats.sort(key=lambda f: (f.get('height', 0) or 0, f.get('tbr', 0) or 0), reverse=True)
+            
+            if quality == 'best':
+                best_format = suitable_formats[0]  # 最高质量
+            else:
+                # 找到不超过目标分辨率的最高质量
+                target_formats = [f for f in suitable_formats if f.get('height', 0) <= target_height]
+                best_format = target_formats[0] if target_formats else suitable_formats[-1]
+
+        # 设置下载格式规范
+        if format == 'mp3':
+            format_spec = 'bestaudio[ext=mp3]/bestaudio'
         else:
             if quality == 'best':
-                format_spec = f'best[ext={format}]/best'  # 其他格式的最佳质量
+                format_spec = f'best[ext={format}]/best'
             else:
-                format_spec = f'best[height<={quality[:-1]}][ext={format}]/best[ext={format}]'
+                format_spec = f'bestvideo[height<={target_height}][ext={format}]+bestaudio[ext=m4a]/best[height<={target_height}][ext={format}]'
 
-        # 使用优化后的格式重新获取信息
+        # 更新ydl选项
         ydl_opts['format'] = format_spec
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                formats = ydl.extract_info(url, download=False).get('formats', [])
-            except Exception as e:
-                print(f"Error getting formats: {str(e)}")
-                formats = info.get('formats', [])
-
-        # 选择最佳匹配的格式
-        best_video = None
         
-        # 首先尝试完全匹配
-        for f in formats:
-            if f.get('ext') == format and f.get('format_note') == quality:
-                best_video = f
-                break
-        
-        # 如果没有完全匹配，尝试按分辨率匹配
-        if not best_video:
-            for f in formats:
-                if f.get('ext') == format:
-                    if quality == 'best' or (f.get('height', 0) <= int(quality[:-1])):
-                        if not best_video or f.get('height', 0) > best_video.get('height', 0):
-                            best_video = f
-
-        # 如果还是没有找到，使用最后一个格式
-        if not best_video and formats:
-            best_video = formats[-1]
-            print(f"Using fallback format: {best_video.get('format_id')}")
-
-        if not best_video:
-            raise ValueError("No suitable format found")
-
-        return info, best_video
+        print(f"Selected format: {best_format.get('format_id')} - {best_format.get('height')}p")
+        return info, best_format
 
     except Exception as e:
         print(f"Error in extract_video_info: {str(e)}")
@@ -378,7 +396,7 @@ async def download_video(video_url: VideoURL):
             "thumbnail_url": info.get('thumbnail', ''),
             "download_url": best_video.get('url', ''),
             "is_short": '/shorts/' in video_url.url,
-            "resolution": best_video.get('format_note', 'Unknown'),
+            "resolution": f"{best_video.get('height', 'Unknown')}p",  # 修正分辨率显示
             "filesize": best_video.get('filesize', 0),
             "ext": video_url.format,
             "download_progress": 0,
@@ -386,26 +404,22 @@ async def download_video(video_url: VideoURL):
             "download_eta": "--:--",
             "download_status": "preparing",
             "local_filename": filename,
-            "save_path": str(filepath)  # 添加保存路径信息
+            "save_path": str(filepath)
         }
 
         # Configure download options
         progress_tracker = DownloadProgress()
         progress_tracker.filename = filename
 
-        # 优化下载选项
-        if video_url.format == 'mp4':
-            if video_url.quality == 'best':
-                format_spec = 'best[ext=mp4]/best'
-            else:
-                format_spec = f'best[height<={video_url.quality[:-1]}][ext=mp4]/best[ext=mp4]'
-        elif video_url.format == 'mp3':
+        # 设置下载格式规范
+        target_height = int(video_url.quality[:-1]) if video_url.quality != 'best' else 0
+        if video_url.format == 'mp3':
             format_spec = 'bestaudio[ext=mp3]/bestaudio'
         else:
             if video_url.quality == 'best':
                 format_spec = f'best[ext={video_url.format}]/best'
             else:
-                format_spec = f'best[height<={video_url.quality[:-1]}][ext={video_url.format}]/best[ext={video_url.format}]'
+                format_spec = f'bestvideo[height<={target_height}][ext={video_url.format}]+bestaudio[ext=m4a]/best[height<={target_height}][ext={video_url.format}]'
 
         # 设置后处理器
         postprocessors = []
@@ -429,6 +443,9 @@ async def download_video(video_url: VideoURL):
             'outtmpl': str(filepath),
             'postprocessors': postprocessors,
         }
+
+        print(f"Using format specification: {format_spec}")
+        print(f"Selected video height: {best_video.get('height')}p")
 
         # Start download in background thread
         loop = asyncio.get_event_loop()
